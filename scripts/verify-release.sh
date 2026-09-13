@@ -5,7 +5,9 @@
 # 「发布成功」的定义不是「脚本跑完没报错」，是「下游能拉下来跑起来」。
 #
 # 用法: ./scripts/verify-release.sh 2.114.10
-#       ./scripts/verify-release.sh 2.114.10 --skip-samples   (只做快检，不编示例工程)
+#       ./scripts/verify-release.sh 2.114.10 --skip-samples    (只做快检，不编示例工程)
+#       ./scripts/verify-release.sh 2.114.10 --ios-only        (只验 iOS，与 release.sh 对齐)
+#       ./scripts/verify-release.sh 2.114.10 --android-only    (只验 Android)
 #
 set -uo pipefail
 
@@ -14,14 +16,23 @@ cd "$ROOT_DIR"
 
 VERSION=""
 SKIP_SAMPLES=0
+# 与 release.sh 的 --android-only / --ios-only 对齐：
+# 只发了一端时，不该去验另一端（否则必然误报失败）
+CHECK_ANDROID=1
+CHECK_IOS=1
 for arg in "$@"; do
     case "$arg" in
         --skip-samples) SKIP_SAMPLES=1 ;;
-        -*)             echo "未知参数: $arg" >&2; exit 1 ;;
+        --android-only) CHECK_IOS=0 ;;
+        --ios-only)     CHECK_ANDROID=0 ;;
+        -*)             echo "未知参数: $arg" >&2
+                        echo "用法: $0 <version> [--skip-samples] [--android-only|--ios-only]" >&2
+                        exit 1 ;;
         *)              VERSION="$arg" ;;
     esac
 done
-[ -n "$VERSION" ] || { echo "用法: $0 <version> [--skip-samples]" >&2; exit 1; }
+[ -n "$VERSION" ] \
+    || { echo "用法: $0 <version> [--skip-samples] [--android-only|--ios-only]" >&2; exit 1; }
 
 if [ -f scripts/release.env ]; then
     # shellcheck disable=SC1091
@@ -36,6 +47,7 @@ bad()     { printf '  \033[31m✗\033[0m %s\n' "$1"; FAIL=1; }
 skip()    { printf '  \033[90m-\033[0m %s\n' "$1"; }
 section() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 
+if [ "$CHECK_ANDROID" -eq 1 ]; then
 section "AAR 结构（本机 ~/.m2）"
 M2_DIR="$HOME/.m2/repository/$(echo "$MAVEN_GROUP" | tr '.' '/')/$MAVEN_ARTIFACT"
 AAR=$(find "$M2_DIR" -name "${MAVEN_ARTIFACT}-${VERSION}.aar" 2>/dev/null | head -1)
@@ -56,7 +68,9 @@ if [ -n "$AAR" ]; then
 else
     skip "本机 ~/.m2 无 ${VERSION}（只在 publishToMavenLocal 后可查）"
 fi
+fi
 
+if [ "$CHECK_IOS" -eq 1 ]; then
 section "XCFramework 结构（本机 build/）"
 XCF="$ROOT_DIR/build/GemstoneFFI.xcframework"
 if [ -d "$XCF" ]; then
@@ -74,13 +88,14 @@ if [ -d "$XCF" ]; then
 else
     skip "本机无 build/GemstoneFFI.xcframework"
 fi
+fi
 
 section "GitHub 远端"
 if ! command -v gh >/dev/null 2>&1 || [ -z "${GH_TOKEN:-}" ]; then
     skip "gh 未装或 GH_TOKEN 未设置，跳过远端检查"
 else
     # ── Maven 包 ──
-    if [ -n "${CORE_REPO:-}" ]; then
+    if [ "$CHECK_ANDROID" -eq 1 ] && [ -n "${CORE_REPO:-}" ]; then
         OWNER="${CORE_REPO%%/*}"
         PKG="${MAVEN_GROUP}.${MAVEN_ARTIFACT}"
         FOUND=""
@@ -99,7 +114,7 @@ else
     fi
 
     # ── Release 与资产 ──
-    if [ -n "${SWIFT_REPO:-}" ]; then
+    if [ "$CHECK_IOS" -eq 1 ] && [ -n "${SWIFT_REPO:-}" ]; then
         if gh release view "$VERSION" --repo "$SWIFT_REPO" >/dev/null 2>&1; then
             ok "Release ${VERSION} 存在"
             if gh release view "$VERSION" --repo "$SWIFT_REPO" --json assets \
@@ -145,6 +160,7 @@ section "下游消费验证"
 if [ "$SKIP_SAMPLES" -eq 1 ]; then
     skip "--skip-samples，跳过示例工程编译"
 else
+    if [ "$CHECK_ANDROID" -eq 1 ]; then
     printf '  [Android] 示例工程拉远端 AAR 编译中...\n'
     # -PgemstoneVersion 让示例工程拉本次发布的版本，而不是它自己算出来的默认值
     if (cd core/gemstone/tests/android/GemTest && \
@@ -156,8 +172,9 @@ else
         bad "Android 示例工程编译失败（详见 /tmp/gem-verify-android.log）"
         tail -10 /tmp/gem-verify-android.log | sed 's/^/      /'
     fi
+    fi
 
-    if [ "$(uname)" = "Darwin" ]; then
+    if [ "$CHECK_IOS" -eq 1 ] && [ "$(uname)" = "Darwin" ]; then
         printf '  [iOS] 示例工程拉远端 SPM 包编译中...\n'
         if (cd core/gemstone/tests/ios/GemTest && \
             xcodebuild -scheme GemTest \
@@ -168,7 +185,7 @@ else
             bad "iOS 示例工程编译失败（详见 /tmp/gem-verify-ios.log）"
             tail -10 /tmp/gem-verify-ios.log | sed 's/^/      /'
         fi
-    else
+    elif [ "$CHECK_IOS" -eq 1 ]; then
         skip "非 macOS，跳过 iOS 示例工程"
     fi
 fi
