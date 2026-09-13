@@ -69,6 +69,32 @@ if [ "$(uname)" = "Darwin" ]; then
             bad "${tool} 未安装（iOS 发布必需）"
         fi
     done
+
+    # 🔴 只查 command -v 不够：Command Line Tools 里也有 xcodebuild 壳，
+    #    但不含 iOS SDK。必须实际解析 SDK 路径才能确认能编 iOS。
+    DEV_DIR=$(xcode-select -p 2>/dev/null)
+    if [ -z "$DEV_DIR" ]; then
+        bad "xcode-select 未配置"
+    elif [[ "$DEV_DIR" == *"CommandLineTools"* ]]; then
+        bad "当前是 Command Line Tools（${DEV_DIR}），不含 iOS SDK"
+        bad "  需安装完整 Xcode，然后："
+        bad "  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
+    else
+        ok "Xcode 开发目录: ${DEV_DIR}"
+    fi
+
+    if SDK_PATH=$(xcrun --show-sdk-path --sdk iphoneos 2>/dev/null) && [ -n "$SDK_PATH" ]; then
+        ok "iOS SDK: $(xcrun --show-sdk-version --sdk iphoneos 2>/dev/null)"
+    else
+        bad "iOS SDK 不可用 —— cc-rs 编译 C 依赖时会失败"
+        bad "  验证命令: xcrun --show-sdk-path --sdk iphoneos"
+    fi
+
+    if xcrun --show-sdk-path --sdk iphonesimulator >/dev/null 2>&1; then
+        ok "iOS Simulator SDK: $(xcrun --show-sdk-version --sdk iphonesimulator 2>/dev/null)"
+    else
+        bad "iOS Simulator SDK 不可用"
+    fi
 else
     warn "非 macOS，无法发布 iOS 制品（xcodebuild 只能在 mac 上跑）"
 fi
