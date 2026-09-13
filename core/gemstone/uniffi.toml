@@ -3,6 +3,6 @@ cdylib_name = "gemstone"
 
 [bindings.swift]
 ffi_module_name = "GemstoneFFI"
-generate_module_map = false
+generate_module_map = true
 experimental_sendable_value_types = true
 omit_localized_error_conformance = true

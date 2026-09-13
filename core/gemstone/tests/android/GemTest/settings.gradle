@@ -13,7 +13,17 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // 本机开发：just gemstone build-android 发到这里
         mavenLocal()
+        // 发布验收：verify-release.sh 用本工程拉真实发布的制品
+        maven {
+            url = uri("https://maven.pkg.github.com/" +
+                    (System.getenv("GITHUB_PACKAGES_REPO") ?: "weaver-max/wallet"))
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: providers.gradleProperty("gpr.user").orNull
+                password = System.getenv("GITHUB_TOKEN") ?: providers.gradleProperty("gpr.token").orNull
+            }
+        }
     }
 }
 

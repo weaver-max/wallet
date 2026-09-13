@@ -146,7 +146,10 @@ if [ "$SKIP_SAMPLES" -eq 1 ]; then
     skip "--skip-samples，跳过示例工程编译"
 else
     printf '  [Android] 示例工程拉远端 AAR 编译中...\n'
-    if (cd core/gemstone/tests/android/GemTest && ./gradlew --quiet assembleDebug) \
+    # -PgemstoneVersion 让示例工程拉本次发布的版本，而不是它自己算出来的默认值
+    if (cd core/gemstone/tests/android/GemTest && \
+        GITHUB_PACKAGES_REPO="${CORE_REPO:-}" \
+        ./gradlew --quiet -PgemstoneVersion="$VERSION" assembleDebug) \
          >/tmp/gem-verify-android.log 2>&1; then
         ok "Android 示例工程编译通过"
     else

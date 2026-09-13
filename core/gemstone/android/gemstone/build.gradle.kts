@@ -12,6 +12,18 @@ val jniLibsDir = project.projectDir.resolve("src/main/jniLibs")
 val generatedKotlinDir = project.projectDir.resolve("src/main/java")
 val cargoBuildFlag = if (System.getenv("BUILD_MODE") == "release") "--release" else null
 
+// 版本号与 core/Cargo.toml 的 workspace version 对齐，避免手动维护两处。
+// release.sh 会显式传 VER_NAME；本机手动发布时回退到读 Cargo.toml。
+val coreVersion: String by lazy {
+    System.getenv("VER_NAME")
+        ?: gemstoneRoot.resolve("../Cargo.toml").readLines()
+            .first { it.trimStart().startsWith("version") }
+            .substringAfter('"').substringBefore('"')
+}
+
+// 发布目标仓库。GitHub Packages 的 Maven registry 挂在仓库下，与源码无关。
+val githubPackagesRepo: String = System.getenv("GITHUB_PACKAGES_REPO") ?: "weaver-max/wallet"
+
 android {
     namespace = "com.gemwallet.gemstone"
     compileSdk = 37
@@ -117,13 +129,28 @@ afterEvaluate {
                 from(components["release"])
                 groupId = "com.gemwallet.gemstone"
                 artifactId = "gemstone"
-                version = System.getenv("VER_NAME") ?: "1.0.0"
+                version = coreVersion
             }
             create<MavenPublication>("debug") {
                 from(components["debug"])
                 groupId = "com.gemwallet.gemstone"
                 artifactId = "gemstone-debug"
-                version = System.getenv("VER_NAME") ?: "1.0.0-debug"
+                version = "$coreVersion-debug"
+            }
+        }
+
+        // 发布目标。没有这个块 Gradle 只会生成 publishXxxToMavenLocal，推不了远端。
+        // task 名由 name 决定：publishReleasePublicationToGitHubPackagesRepository
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri("https://maven.pkg.github.com/$githubPackagesRepo")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                        ?: providers.gradleProperty("gpr.user").orNull
+                    password = System.getenv("GITHUB_TOKEN")
+                        ?: providers.gradleProperty("gpr.token").orNull
+                }
             }
         }
     }

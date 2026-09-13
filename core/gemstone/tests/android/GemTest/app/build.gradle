@@ -4,6 +4,16 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+// gemstone 版本：优先取 -PgemstoneVersion，否则读 core/Cargo.toml 的 workspace version。
+// 这样不用在本文件里硬编码版本号，避免与实际发布产物脱节。
+def gemstoneVersion = project.findProperty('gemstoneVersion') ?: {
+    // rootDir = tests/android/GemTest，回到 core/ 需要上 4 层。
+    // 注意不是 core/gemstone/Cargo.toml —— 那里写的是 version = { workspace = true }
+    def cargoToml = file("${rootDir}/../../../../Cargo.toml")
+    def line = cargoToml.readLines().find { it.trim().startsWith('version') }
+    line.split('"')[1]
+}()
+
 android {
     namespace "com.example.gemtest"
     compileSdk 35
@@ -40,7 +50,9 @@ android {
 
 dependencies {
     api "net.java.dev.jna:jna:5.18.1@aar"
-    api "com.gemwallet.gemstone:gemstone:1.0.3@aar"
+    // 版本由 -PgemstoneVersion 传入，默认取 core/Cargo.toml 的 workspace version。
+    // verify-release.sh 会传发布中的版本号，用本工程验证下游能否真正拉到制品。
+    api "com.gemwallet.gemstone:gemstone:${gemstoneVersion}@aar"
 
     implementation("io.ktor:ktor-client-core:3.0.0")
     implementation("io.ktor:ktor-client-cio:3.0.0")
