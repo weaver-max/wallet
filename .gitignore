@@ -7,3 +7,10 @@ core/.env
 core/.vscode/
 core/gemstone/src/.build/
 *.code-workspace
+
+# gemstone 发布脚本
+scripts/release.env
+/build/
+
+# 工具状态目录
+.omc/
