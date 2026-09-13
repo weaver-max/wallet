@@ -68,11 +68,26 @@ log "device lib: $(du -h "$DEVICE_LIB" | cut -f1)"
 log "sim    lib: $(du -h "$SIM_LIB"    | cut -f1)"
 
 # ── 打包 ─────────────────────────────────────────────────
-xcodebuild -create-xcframework \
-    -library "$DEVICE_LIB" -headers "$HEADERS" \
-    -library "$SIM_LIB"    -headers "$HEADERS" \
-    -output "$OUT" >/dev/null 2>&1 \
-    || die "xcodebuild -create-xcframework 失败，去掉 >/dev/null 重跑看详细报错"
+XCB_LOG=$(mktemp)
+if ! xcodebuild -create-xcframework \
+        -library "$DEVICE_LIB" -headers "$HEADERS" \
+        -library "$SIM_LIB"    -headers "$HEADERS" \
+        -output "$OUT" >"$XCB_LOG" 2>&1; then
+    {
+        echo "error: xcodebuild -create-xcframework 失败"
+        echo "       完整日志：$XCB_LOG"
+        echo "       ── 报错摘要 ──"
+        # 优先提取 Apple 给的可操作建议，否则回退到日志尾部
+        if grep -qE "runFirstLaunch|required plug-in" "$XCB_LOG"; then
+            echo "       Xcode 首次启动组件未安装。请执行："
+            echo "         sudo xcodebuild -runFirstLaunch"
+        fi
+        grep -E "^error:|^\*\* |failed to load|cannot be located" "$XCB_LOG" | head -5 | sed 's/^/       /'
+        [ -s "$XCB_LOG" ] && tail -3 "$XCB_LOG" | sed 's/^/       /'
+    } >&2
+    exit 1
+fi
+rm -f "$XCB_LOG"
 
 # 自检：两个切片都在
 SLICES=$(find "$OUT" -maxdepth 1 -type d -name "ios-*" | wc -l | tr -d ' ')
