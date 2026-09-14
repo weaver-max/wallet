@@ -59,7 +59,8 @@ cd core/gemstone && just bindgen-kotlin
 ### 需要书面确认的 3 个问题
 
 1. **AAR 里 JNA 是 `api` 还是 `implementation`？** —— gem 源码里是 `api("net.java.dev.jna:jna:5.18.1@aar")`，会传递给你。确认发布版没改。
-2. **`minSdk` 是多少？** —— gem 的模块是 `minSdk = 28`，你的 App 不能低于它。
+2. **构建配置的三条下限是多少？** —— 实测（`2.114.10`）是 `minSdk 28` · `compileSdk 37` · `jvmTarget 17`，
+   三条都不能低。core 团队若调整了其中任何一条，必须随发布公告，否则下游是**编译期**报错。
 3. **能否导出 `verify` 接口？** —— 目前没导出，见 [§8](#8-已知缺口)。如果你需要"校验钱包文件可用"，把这条加进清单。
 
 ---
@@ -137,7 +138,8 @@ plugins {
 
 android {
     namespace = "com.example.ethwallet"
-    compileSdk = 36
+    compileSdk = 37                                      // 🔴 不能低于 gemstone 的 compileSdk
+    compileSdkMinor = 0                                  // 🔴 Android 37 起用 major.minor，没有裸 android-37
 
     defaultConfig {
         minSdk = 28                                      // 🔴 不能低于 gemstone 的 minSdk
@@ -145,13 +147,13 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17     // 🔴 AAR 是 JVM 17 编的，不能降到 1.8
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
 
 kotlin {
-    compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
+    compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }  // 🔴 同上
 }
 
 dependencies {
@@ -636,11 +638,16 @@ interface GemPreferences {
 
 AlienTarget(url: String, method: AlienHttpMethod,
             headers: Map<String, String>?, body: ByteArray?)
-AlienResponse(status: UShort?, data: ByteArray)     // ← 构造函数
+AlienResponse(status: UShort?, data: ByteArray)     // ← 只有构造函数
 
 // 工具函数
 alienMethodToString(method: AlienHttpMethod) -> String
 ```
+
+> ⚠️ **`AlienResponse` 在 Kotlin 侧是不透明句柄**（Rust 那边是 `#[derive(uniffi::Object)]`，
+> 字段私有）。生成的 `AlienResponseInterface` 是**空接口**，没有任何 getter ——
+> 你只能**造**它交给 Rust 消费，**读不出 status 和 data**。
+> 要打日志就在构造之前打，别指望从返回值里取。这是设计如此，不是缺陷。
 
 ---
 
