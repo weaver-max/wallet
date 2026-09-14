@@ -26,7 +26,12 @@ val githubPackagesRepo: String = System.getenv("GITHUB_PACKAGES_REPO") ?: "weave
 
 android {
     namespace = "com.gemwallet.gemstone"
+    // Android 37 起改用 major.minor API 方案，SDK 源里只有 android-37.0 / 37.1 / 37.2，
+    // 没有裸 android-37。只写 compileSdk = 37 时 AGP 会去找 hash "android-37" 并报
+    // "Failed to find target with hash string 'android-37'"。
+    // compileSdkMinor 是 AGP 9 为此提供的正规写法。
     compileSdk = 37
+    compileSdkMinor = 0
 
     defaultConfig {
         minSdk = 28
