@@ -160,23 +160,35 @@ if ! command -v gh >/dev/null 2>&1; then
 elif [ -z "${GH_TOKEN:-}" ]; then
     warn "GH_TOKEN 未设置，跳过 GitHub 检查"
 else
-    LOGIN=$(gh api user --jq .login 2>/dev/null)
-    if [ -n "$LOGIN" ]; then
+    # GitHub API 偶发 EOF / SSL_ERROR_SYSCALL，单次失败不代表真有问题。
+    # 实测一天内误报 4 次，全部重试即通过。统一加 3 次重试。
+    gh_retry() {
+        local out
+        for _ in 1 2 3; do
+            if out=$(gh api "$@" 2>/dev/null) && [ -n "$out" ]; then
+                printf '%s' "$out"; return 0
+            fi
+            sleep 2
+        done
+        return 1
+    }
+
+    if LOGIN=$(gh_retry user --jq .login); then
         ok "GitHub API 可达，登录为 ${LOGIN}"
     else
-        bad "GitHub API 不可达或 GH_TOKEN 无效"
+        bad "GitHub API 不可达或 GH_TOKEN 无效（已重试 3 次）"
     fi
 
     if [ -n "${CORE_REPO:-}" ]; then
-        if gh api "repos/${CORE_REPO}" --jq .full_name >/dev/null 2>&1; then
+        if gh_retry "repos/${CORE_REPO}" --jq .full_name >/dev/null; then
             ok "可访问 ${CORE_REPO}"
         else
-            bad "无法访问 ${CORE_REPO}（仓库不存在或 token 权限不足）"
+            bad "无法访问 ${CORE_REPO}（重试 3 次仍失败：仓库不存在或 token 权限不足）"
         fi
     fi
 
     if [ -n "${SWIFT_REPO:-}" ]; then
-        REPO_JSON=$(gh api "repos/${SWIFT_REPO}" 2>/dev/null)
+        REPO_JSON=$(gh_retry "repos/${SWIFT_REPO}")
         if [ -n "$REPO_JSON" ]; then
             VIS=$(jq -r '.visibility // "unknown"' <<<"$REPO_JSON")
             PUSH=$(jq -r '.permissions.push // false' <<<"$REPO_JSON")
@@ -197,7 +209,7 @@ else
                 ok "visibility=public，SPM binaryTarget 可直接下载"
             fi
         else
-            bad "无法访问 ${SWIFT_REPO}（仓库不存在或 token 权限不足）"
+            bad "无法访问 ${SWIFT_REPO}（重试 3 次仍失败：仓库不存在或 token 权限不足）"
         fi
     fi
 fi
