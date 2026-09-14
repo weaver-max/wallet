@@ -100,10 +100,16 @@ if [ "$DO_ANDROID" -eq 1 ]; then
     run "(cd core/gemstone && just bindgen-kotlin)"
 
     step "发布 AAR 到 GitHub Packages"
+    # dl.google.com / repo.maven.apache.org 偶发 SSL_ERROR_SYSCALL（实测成功率可低至 2/5）。
+    # Gradle 默认不重试依赖解析失败，一次抖动就整个构建挂掉 —— 加重试与超时。
+    GRADLE_NET_OPTS="-Dorg.gradle.internal.repository.max.retries=5"
+    GRADLE_NET_OPTS="$GRADLE_NET_OPTS -Dorg.gradle.internal.repository.initial.backoff=500"
+    GRADLE_NET_OPTS="$GRADLE_NET_OPTS -Dorg.gradle.internal.http.connectionTimeout=60000"
+    GRADLE_NET_OPTS="$GRADLE_NET_OPTS -Dorg.gradle.internal.http.socketTimeout=60000"
     run "(cd core/gemstone/android && touch local.properties && \
           BUILD_MODE=release VER_NAME='$VERSION' \
           GITHUB_ACTOR='${GITHUB_ACTOR:-}' GITHUB_TOKEN='$GH_TOKEN' \
-          ./gradlew publishReleasePublicationToGitHubPackagesRepository)"
+          ./gradlew $GRADLE_NET_OPTS publishReleasePublicationToGitHubPackagesRepository)"
     info "${MAVEN_GROUP}:${MAVEN_ARTIFACT}:${VERSION}"
     info "https://github.com/${CORE_REPO}/packages"
 fi
