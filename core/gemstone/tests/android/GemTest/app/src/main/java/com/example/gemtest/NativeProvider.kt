@@ -39,6 +39,10 @@ class NativeProvider: AlienProvider {
         val bytes: ByteArray = response.body()
         val status = response.status.value
 
+        // AlienResponse 是 uniffi::Object（不透明句柄），Kotlin 侧只能构造、读不出内容。
+        // 所以要打日志只能在包装之前打，调用方拿到的对象是给 Rust 消费的。
+        println("[NativeProvider] ${target.url} -> $status, ${bytes.size} bytes")
+
         return AlienResponse(status.toUShort(), bytes)
     }
 }

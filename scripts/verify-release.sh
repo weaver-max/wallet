@@ -240,8 +240,14 @@ public enum Probe { public static func v() -> String { libVersion() } }' \
     if [ "$CHECK_ANDROID" -eq 1 ]; then
     printf '  [Android] 示例工程拉远端 AAR 编译中...\n'
     # -PgemstoneVersion 让示例工程拉本次发布的版本，而不是它自己算出来的默认值
+    # 🔴 GITHUB_ACTOR / GITHUB_TOKEN 必须传：
+    #    GitHub Packages 的 Maven registry 即使对 public 仓库也要求鉴权，
+    #    不传会拿到 401 Unauthorized（不是 404，容易误判成包不存在）。
+    #    示例工程的 settings.gradle 读的是 GITHUB_TOKEN，而本脚本用 GH_TOKEN，需转换。
     if (cd core/gemstone/tests/android/GemTest && \
         GITHUB_PACKAGES_REPO="${CORE_REPO:-}" \
+        GITHUB_ACTOR="${GITHUB_ACTOR:-}" \
+        GITHUB_TOKEN="${GH_TOKEN:-}" \
         ./gradlew --quiet -PgemstoneVersion="$VERSION" assembleDebug) \
          >/tmp/gem-verify-android.log 2>&1; then
         ok "Android 示例工程编译通过"

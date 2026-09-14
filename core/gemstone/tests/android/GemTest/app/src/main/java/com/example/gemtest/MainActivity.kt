@@ -64,8 +64,11 @@ fun fetchData() {
             ),
             body = null
         )
-        val response = nativeProvider.request(target)
-        println("status: ${response.status}, body: ${String(response.data)}")
+        // 返回值是 AlienResponse —— uniffi::Object，Kotlin 侧没有 getter。
+        // 它的用途是交给 Rust 消费，状态码/正文由 NativeProvider 在构造前打印。
+        nativeProvider.request(target).use {
+            println("request ok")
+        }
     }
 }
 

@@ -16,7 +16,12 @@ def gemstoneVersion = project.findProperty('gemstoneVersion') ?: {
 
 android {
     namespace "com.example.gemtest"
-    compileSdk 35
+    // 必须 >= 库的 compileSdk（android/gemstone/build.gradle.kts 是 37），
+    // 否则 AGP 报 ":app is currently compiled against android-35"。
+    // compileSdkMinor 是必需的：Android 37 起用 major.minor 方案，
+    // SDK 源里只有 android-37.0，没有裸 android-37。
+    compileSdk 37
+    compileSdkMinor 0
     ndkVersion = "26.1.10909125"
     defaultConfig {
         applicationId "com.example.gemtest"
@@ -36,12 +41,16 @@ android {
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
     }
+    // 🔴 必须是 17：gemstone AAR 本身用 JVM target 17 编译
+    // （见 android/gemstone/build.gradle.kts 的 JvmTarget.JVM_17）。
+    // 消费方停在 1.8 时，凡是内联 AAR 里的方法（如 AutoCloseable.use）都会报
+    // "Cannot inline bytecode built with JVM target 17 into bytecode built with JVM target 1.8"。
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
     buildFeatures {
         compose true
