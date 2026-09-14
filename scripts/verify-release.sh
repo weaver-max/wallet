@@ -146,20 +146,97 @@ else
         fi
 
         # ── 🔴 匿名可达性：SPM binaryTarget 不带鉴权头 ──
+        # 只取前 1KB 验证可达即可，不必拉完整 19MB：
+        # 实测同一文件耗时在 8s~44s 间波动，固定超时会误判；
+        # 且偶发 SSL_ERROR_SYSCALL，需要重试才稳。
         ZIP_URL="https://github.com/${SWIFT_REPO}/releases/download/${VERSION}/GemstoneFFI.xcframework.zip"
-        if curl -fsSL --max-time 20 -o /dev/null -w '' "$ZIP_URL" 2>/dev/null; then
-            ok "zip 匿名可下载（SPM binaryTarget 能拉到）"
+        ANON_OK=0
+        for attempt in 1 2 3; do
+            HTTP=$(curl -sSL --max-time 30 --retry 0 \
+                     -H "Range: bytes=0-1023" \
+                     -o /dev/null -w '%{http_code}' "$ZIP_URL" 2>/dev/null)
+            # 206 = Range 生效；200 = 服务端忽略 Range 但可达
+            if [ "$HTTP" = "206" ] || [ "$HTTP" = "200" ]; then
+                ANON_OK=1; break
+            fi
+            [ "$attempt" -lt 3 ] && sleep 2
+        done
+        if [ "$ANON_OK" -eq 1 ]; then
+            ok "zip 匿名可达（SPM binaryTarget 能拉到）"
         else
-            bad "zip 匿名下载失败 —— 下游 SPM 会 404"
-            skip "  仓库若是 private，binaryTarget 拉不到。见 脚本发布教程.md §2.4"
+            bad "zip 匿名下载失败（3 次重试后 HTTP ${HTTP:-000}）"
+            skip "  HTTP 404 → 仓库是 private，binaryTarget 拉不到，见 脚本发布教程.md §2.4"
+            skip "  HTTP 000 → 网络问题，手动重试: curl -I '$ZIP_URL'"
         fi
     fi
 fi
 
 section "下游消费验证"
 if [ "$SKIP_SAMPLES" -eq 1 ]; then
-    skip "--skip-samples，跳过示例工程编译"
+    skip "--skip-samples，跳过下游真实拉取"
 else
+    # ── 🔴 SPM 真实解析 ──────────────────────────────────────────
+    # 前面所有检查（curl 下载、API 查 Release/tag、读 Package.swift）
+    # 都在「文件是否存在、内容是否正确」层面，碰不到 SPM 自己的解析器。
+    # 实测教训：仓库里有非 ASCII 文件名时，git 会对其做八进制转义并加引号，
+    # SPM 的 git tree 解析器直接报 malformedResponse —— 整个包无法被依赖，
+    # 但上述检查全部绿灯。这一步是唯一能发现该类问题的关卡。
+    if [ "$CHECK_IOS" -eq 1 ] && [ -n "${SWIFT_REPO:-}" ] && command -v swift >/dev/null 2>&1; then
+        printf '  [iOS] SPM 真实解析中（会下载 zip 并校验 checksum）...\n'
+        SPM_TMP=$(mktemp -d)
+        mkdir -p "$SPM_TMP/Sources/Probe"
+        cat > "$SPM_TMP/Package.swift" <<EOF
+// swift-tools-version: 6.0
+import PackageDescription
+let package = Package(
+    name: "Probe",
+    platforms: [.iOS(.v17)],
+    products: [.library(name: "Probe", targets: ["Probe"])],
+    dependencies: [
+        .package(url: "https://github.com/${SWIFT_REPO}.git", exact: "${VERSION}")
+    ],
+    targets: [
+        .target(name: "Probe", dependencies: [
+            .product(name: "Gemstone", package: "$(basename "$SWIFT_REPO")")
+        ])
+    ]
+)
+EOF
+        echo 'import Gemstone
+public enum Probe { public static func v() -> String { libVersion() } }' \
+            > "$SPM_TMP/Sources/Probe/Probe.swift"
+
+        if (cd "$SPM_TMP" && timeout 300 swift package resolve) >/tmp/gem-verify-spm.log 2>&1; then
+            ok "SPM 解析通过（清单可读、zip 可下、checksum 匹配）"
+
+            # 解析只验证「拿得到」，编译才验证「用得了」：
+            # module.modulemap 是否被识别、切片是否选对、符号是否能链接。
+            if xcodebuild -showsdks 2>/dev/null | grep -q iphonesimulator; then
+                printf '  [iOS] 编译链接中...\n'
+                if (cd "$SPM_TMP" && timeout 600 xcodebuild -scheme Probe \
+                        -destination 'generic/platform=iOS Simulator' \
+                        -derivedDataPath "$SPM_TMP/dd" build) >/tmp/gem-verify-ios.log 2>&1; then
+                    ok "iOS 编译链接通过（modulemap 可识别、符号可解析）"
+                else
+                    bad "iOS 编译失败（详见 /tmp/gem-verify-ios.log）"
+                    grep -E "error:|\*\* BUILD" /tmp/gem-verify-ios.log | head -5 | sed 's/^/      /'
+                fi
+            else
+                skip "无 iOS Simulator SDK，跳过编译验证"
+                skip "  安装: xcodebuild -downloadPlatform iOS"
+            fi
+        else
+            bad "SPM 解析失败（详见 /tmp/gem-verify-spm.log）"
+            grep -E "error:|malformedResponse|checksum" /tmp/gem-verify-spm.log | head -3 | sed 's/^/      /'
+            # 非 ASCII 文件名是最常见的原因，直接点出来
+            if grep -q "malformedResponse" /tmp/gem-verify-spm.log; then
+                bad "  疑似仓库含非 ASCII 文件名 —— SPM 的 git tree 解析器不支持"
+                bad "  检查: git ls-tree HEAD | grep '\"'"
+            fi
+        fi
+        rm -rf "$SPM_TMP"
+    fi
+
     if [ "$CHECK_ANDROID" -eq 1 ]; then
     printf '  [Android] 示例工程拉远端 AAR 编译中...\n'
     # -PgemstoneVersion 让示例工程拉本次发布的版本，而不是它自己算出来的默认值
@@ -174,20 +251,9 @@ else
     fi
     fi
 
-    if [ "$CHECK_IOS" -eq 1 ] && [ "$(uname)" = "Darwin" ]; then
-        printf '  [iOS] 示例工程拉远端 SPM 包编译中...\n'
-        if (cd core/gemstone/tests/ios/GemTest && \
-            xcodebuild -scheme GemTest \
-                -destination "platform=iOS Simulator,name=${SIMULATOR_NAME:-iPhone 17}" \
-                build) >/tmp/gem-verify-ios.log 2>&1; then
-            ok "iOS 示例工程编译通过"
-        else
-            bad "iOS 示例工程编译失败（详见 /tmp/gem-verify-ios.log）"
-            tail -10 /tmp/gem-verify-ios.log | sed 's/^/      /'
-        fi
-    elif [ "$CHECK_IOS" -eq 1 ]; then
-        skip "非 macOS，跳过 iOS 示例工程"
-    fi
+    # 注：core/gemstone/tests/ios/GemTest 用的是本地路径依赖
+    # （Packages/Gemstone，靠 prepare-ios-package 本地生成），
+    # 不拉远端包，因此不能用它验收发布产物。上面的 Probe 包才是真实下游路径。
 fi
 
 echo
